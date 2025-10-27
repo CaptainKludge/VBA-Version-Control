@@ -250,6 +250,7 @@ End Function
 ' Returns True if identical (by checksum), False otherwise
 ' This is to enable automatic project change detetection of a target safe file. Like a tests completed output.
 ` or to identify which internal module has changed on save to keep from writing all outputs every time.
+' Compare a single module to its exported file (.bas, .cls, .frm)
 Public Function CompareModuleToBasFile(ByVal moduleName As String, ByVal basFilePath As String) As Boolean
     Dim moduleContent As String
     Dim fileContent As String
@@ -265,34 +266,101 @@ Public Function CompareModuleToBasFile(ByVal moduleName As String, ByVal basFile
     hashFile = GetMD5(fileContent)
     
     CompareModuleToBasFile = (hashModule = hashFile)
-    
     Exit Function
+    
 ErrHandler:
-    Debug.Print "CompareModuleToBasFile error: " & Err.Description
+    Debug.Print "CompareModuleToBasFile error (" & moduleName & "): " & Err.Description
     CompareModuleToBasFile = False
 End Function
 
 
-' Returns the MD5 checksum of a VBA module in the current workbook
-Public Function GetModuleChecksum(ByVal moduleName As String) As String
-    Dim code As String
-    code = GetModuleCode(ThisWorkbook, moduleName)
-    GetModuleChecksum = GetMD5(code)
+' Compare all VBA components in the current workbook to a folder of exported files
+' Returns True if all match, False if any differ
+Public Function CompareAllModulesToFolder(ByVal folderPath As String) As Boolean
+    Dim vbComp As Object
+    Dim fso As Object
+    Dim folderMatch As Boolean
+    Dim filePath As String
+    Dim ext As String
+    Dim allMatch As Boolean
+    Dim diffCount As Long
+    
+    On Error GoTo ErrHandler
+    
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    allMatch = True
+    
+    Debug.Print "=== VBA Project Checksum Report ==="
+    Debug.Print "Folder: " & folderPath
+    Debug.Print "-----------------------------------"
+    
+    For Each vbComp In ThisWorkbook.VBProject.VBComponents
+        Select Case vbComp.Type
+            Case 1: ext = ".bas" ' Standard Module
+            Case 2: ext = ".cls" ' Class Module
+            Case 3: ext = ".frm" ' UserForm
+            Case Else: ext = ".bas"
+        End Select
+        
+        filePath = fso.BuildPath(folderPath, vbComp.Name & ext)
+        
+        If fso.FileExists(filePath) Then
+            folderMatch = CompareModuleToBasFile(vbComp.Name, filePath)
+            
+            If folderMatch Then
+                Debug.Print vbComp.Name & " — OK"
+            Else
+                Debug.Print vbComp.Name & " — DIFFERENT"
+                allMatch = False
+                diffCount = diffCount + 1
+            End If
+        Else
+            Debug.Print vbComp.Name & " — Missing file (" & filePath & ")"
+            allMatch = False
+        End If
+    Next vbComp
+    
+    Debug.Print "-----------------------------------"
+    If allMatch Then
+        Debug.Print " All modules match exported files."
+    Else
+        Debug.Print " " & diffCount & " module(s) differ or missing."
+    End If
+    
+    CompareAllModulesToFolder = allMatch
+    Exit Function
+    
+ErrHandler:
+    Debug.Print "CompareAllModulesToFolder error: " & Err.Description
+    CompareAllModulesToFolder = False
 End Function
 
 
-'--- Internal Utilities ----------------------------------------------------
+' Returns a dictionary (late-bound) with [ModuleName] = MD5 checksum
+Public Function GetAllModuleChecksums() As Object
+    Dim vbComp As Object
+    Dim dict As Object
+    Set dict = CreateObject("Scripting.Dictionary")
+    
+    For Each vbComp In ThisWorkbook.VBProject.VBComponents
+        dict(vbComp.Name) = GetMD5(GetModuleCode(ThisWorkbook, vbComp.Name))
+    Next vbComp
+    
+    Set GetAllModuleChecksums = dict
+End Function
 
-' Reads the code of a module in a given workbook
+
+'=== Internal Utilities ====================================================
+
+' Get all lines of code from a VBA component
 Private Function GetModuleCode(ByVal wb As Workbook, ByVal moduleName As String) As String
     Dim vbComp As Object
-    Dim code As String
     Set vbComp = wb.VBProject.VBComponents(moduleName)
-    code = vbComp.CodeModule.Lines(1, vbComp.CodeModule.CountOfLines)
-    GetModuleCode = code
+    GetModuleCode = vbComp.CodeModule.Lines(1, vbComp.CodeModule.CountOfLines)
 End Function
 
-' Reads a text file (UTF-8 safe)
+
+' Read text from file (UTF-8 safe for ASCII content)
 Private Function ReadTextFile(ByVal filePath As String) As String
     Dim fso As Object, ts As Object
     Set fso = CreateObject("Scripting.FileSystemObject")
@@ -301,7 +369,8 @@ Private Function ReadTextFile(ByVal filePath As String) As String
     ts.Close
 End Function
 
-' Computes an MD5 hash (using .NET’s crypto library via COM)
+
+' Compute MD5 hash from text
 Private Function GetMD5(ByVal text As String) As String
     Dim enc As Object, bytes() As Byte
     Dim hash() As Byte, i As Long
