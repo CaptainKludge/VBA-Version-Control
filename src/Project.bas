@@ -245,3 +245,70 @@ Private Function joinPaths(ParamArray paths() As Variant) As String
         joinPaths = fso.BuildPath(joinPaths, Replace(paths(index), "/", "\"))
     Next
 End Function
+
+' Compares a VBA module's code in the current workbook against a .bas file
+' Returns True if identical (by checksum), False otherwise
+' This is to enable automatic project change detetection of a target safe file. Like a tests completed output.
+` or to identify which internal module has changed on save to keep from writing all outputs every time.
+Public Function CompareModuleToBasFile(ByVal moduleName As String, ByVal basFilePath As String) As Boolean
+    Dim moduleContent As String
+    Dim fileContent As String
+    Dim hashModule As String
+    Dim hashFile As String
+    
+    On Error GoTo ErrHandler
+    
+    moduleContent = GetModuleCode(ThisWorkbook, moduleName)
+    fileContent = ReadTextFile(basFilePath)
+    
+    hashModule = GetMD5(moduleContent)
+    hashFile = GetMD5(fileContent)
+    
+    CompareModuleToBasFile = (hashModule = hashFile)
+    
+    Exit Function
+ErrHandler:
+    Debug.Print "CompareModuleToBasFile error: " & Err.Description
+    CompareModuleToBasFile = False
+End Function
+
+
+' Returns the MD5 checksum of a VBA module in the current workbook
+Public Function GetModuleChecksum(ByVal moduleName As String) As String
+    Dim code As String
+    code = GetModuleCode(ThisWorkbook, moduleName)
+    GetModuleChecksum = GetMD5(code)
+End Function
+
+
+'--- Internal Utilities ----------------------------------------------------
+
+' Reads the code of a module in a given workbook
+Private Function GetModuleCode(ByVal wb As Workbook, ByVal moduleName As String) As String
+    Dim vbComp As Object
+    Dim code As String
+    Set vbComp = wb.VBProject.VBComponents(moduleName)
+    code = vbComp.CodeModule.Lines(1, vbComp.CodeModule.CountOfLines)
+    GetModuleCode = code
+End Function
+
+' Reads a text file (UTF-8 safe)
+Private Function ReadTextFile(ByVal filePath As String) As String
+    Dim fso As Object, ts As Object
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    Set ts = fso.OpenTextFile(filePath, 1)
+    ReadTextFile = ts.ReadAll
+    ts.Close
+End Function
+
+' Computes an MD5 hash (using .NET’s crypto library via COM)
+Private Function GetMD5(ByVal text As String) As String
+    Dim enc As Object, bytes() As Byte
+    Dim hash() As Byte, i As Long
+    Set enc = CreateObject("System.Security.Cryptography.MD5CryptoServiceProvider")
+    bytes = StrConv(text, vbFromUnicode)
+    hash = enc.ComputeHash_2((bytes))
+    For i = 0 To UBound(hash)
+        GetMD5 = GetMD5 & LCase(Right("0" & Hex(hash(i)), 2))
+    Next i
+End Function
